@@ -1,0 +1,21 @@
+name: astrbot_plugin_sam_shopping
+display_name: 山姆代购
+short_desc: 山姆商品代购：下单、运费计算、易支付收款与邮件通知
+desc: |
+  山姆代购插件。支持浏览分类商品、按名称与数量加入购物车、查看/删除/清空购物车、
+  按「极速达 / 全国配」规则计算运费、生成易支付收款二维码、自动轮询支付状态，
+  并在支付成功后向管理员邮箱发送「有新的代购消息」通知。管理员可添加商品。
+version: 1.0.0
+author: 应急食品
+repo: https://github.com/2671016745/astrbot_plugin_sam_shopping
+support_platforms:
+  - aiocqhttp
+  - telegram
+  - discord
+  - weixin_official
+  - webchat
+astrbot_version: ">=4.0.0"
+tags:
+  - 购物
+  - 支付
+  - 山姆

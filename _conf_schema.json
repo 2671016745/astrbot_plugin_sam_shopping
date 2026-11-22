@@ -1,0 +1,183 @@
+{
+  "general": {
+    "description": "常规设置",
+    "type": "object",
+    "items": {
+      "wake_word": {
+        "description": "唤醒词，所有指令的前缀",
+        "type": "string",
+        "default": "sam's",
+        "hint": "修改后需重启/重载插件。例如 sam's，之后使用 sam's menu 等指令"
+      },
+      "wake_aliases": {
+        "description": "唤醒词别名（留空则只用唤醒词）",
+        "type": "list",
+        "default": [],
+        "items": { "type": "string", "description": "别名" }
+      },
+      "admins": {
+        "description": "管理员用户 ID 列表（用于添加商品）",
+        "type": "list",
+        "default": [],
+        "items": { "type": "string", "description": "用户 ID" }
+      },
+      "fallback_platform_admin": {
+        "description": "当用户 ID 不在管理员列表时，是否允许 AstrBot 平台管理员使用管理指令",
+        "type": "bool",
+        "default": false
+      },
+      "default_channel": {
+        "description": "默认配送方式",
+        "type": "string",
+        "default": "express",
+        "options": [
+          { "label": "极速达", "value": "express" },
+          { "label": "全国配", "value": "national" }
+        ]
+      },
+      "enable_express": {
+        "description": "启用「极速达」配送方式",
+        "type": "bool",
+        "default": true
+      },
+      "enable_national": {
+        "description": "启用「全国配」配送方式",
+        "type": "bool",
+        "default": true
+      },
+      "shop_name": {
+        "description": "店铺名称（用于通知与帮助）",
+        "type": "string",
+        "default": "山姆代购"
+      }
+    }
+  },
+  "freight": {
+    "description": "运费规则",
+    "type": "object",
+    "items": {
+      "amount_base": {
+        "description": "满减计算基数",
+        "type": "string",
+        "default": "goods",
+        "options": [
+          { "label": "商品总金额（推荐）", "value": "goods" },
+          { "label": "含运费金额", "value": "total" }
+        ]
+      },
+      "default_weight_kg": {
+        "description": "商品未填写重量时的默认重量（kg）",
+        "type": "float",
+        "default": 1.0
+      },
+      "express": {
+        "description": "极速达规则",
+        "type": "object",
+        "items": {
+          "free_amount": { "description": "满额免基础运费门槛（元）", "type": "float", "default": 99.0 },
+          "base_fee": { "description": "未达门槛且未超重时的固定运费（元）", "type": "float", "default": 10.0 },
+          "free_weight": { "description": "免费重量（kg）", "type": "float", "default": 15.0 },
+          "overweight_rate": { "description": "续重费率（元/kg）", "type": "float", "default": 1.0 },
+          "per_100_discount": { "description": "每满 100 元减免金额（元）", "type": "float", "default": 10.0 },
+          "per_100_free_weight": { "description": "每满 100 元额外增加的免重（kg）", "type": "float", "default": 0.0 }
+        }
+      },
+      "national": {
+        "description": "全国配规则",
+        "type": "object",
+        "items": {
+          "free_amount": { "description": "满额免基础运费门槛（元）", "type": "float", "default": 299.0 },
+          "base_fee": { "description": "未达门槛且未超重时的固定运费（元）", "type": "float", "default": 15.0 },
+          "free_weight": { "description": "免费重量（kg）", "type": "float", "default": 15.0 },
+          "overweight_rate": { "description": "续重费率（元/kg）", "type": "float", "default": 1.0 },
+          "per_100_discount": { "description": "每满 100 元减免金额（元）", "type": "float", "default": 10.0 },
+          "per_100_free_weight": { "description": "每满 100 元额外增加的免重（kg），即“每满 100 元减免 5kg 运费”", "type": "float", "default": 5.0 }
+        }
+      }
+    }
+  },
+  "payment": {
+    "description": "易支付网关",
+    "type": "object",
+    "items": {
+      "gateway": { "description": "易支付网关地址，例如 https://pay.example.com", "type": "string", "default": "" },
+      "pid": { "description": "商户 ID", "type": "string", "default": "" },
+      "key": { "description": "商户密钥（不会输出到聊天或日志）", "type": "string", "secret": true, "default": "" },
+      "pay_type": { "description": "支付方式代码，如 wxpay / alipay", "type": "string", "default": "wxpay" },
+      "sign_type": { "description": "签名方式", "type": "string", "default": "MD5", "options": [ { "label": "MD5", "value": "MD5" } ] },
+      "create_path": { "description": "创建收款接口路径", "type": "string", "default": "/mapi.php" },
+      "query_path": { "description": "订单查询接口路径", "type": "string", "default": "/api.php" },
+      "query_act": { "description": "订单查询接口 act 参数", "type": "string", "default": "order" },
+      "query_auth": {
+        "description": "订单查询接口鉴权方式",
+        "type": "string",
+        "default": "key",
+        "options": [
+          { "label": "key（多数易支付网关）", "value": "key" },
+          { "label": "sign 签名", "value": "sign" }
+        ]
+      },
+      "sign_urlencode": {
+        "description": "计算签名时是否对参数做 URL 编码（多数网关不编码）",
+        "type": "bool",
+        "default": false
+      },
+      "notify_url": { "description": "异步回调地址（可选）", "type": "string", "default": "" },
+      "return_url": { "description": "同步回跳地址（可选）", "type": "string", "default": "" },
+      "paid_status_values": {
+        "description": "查询结果中判定“已支付”的 status 取值",
+        "type": "list",
+        "default": [2],
+        "items": { "type": "int", "description": "状态值" }
+      },
+      "paid_trade_status": {
+        "description": "查询结果中判定“已支付”的 trade_status 取值",
+        "type": "list",
+        "default": ["TRADE_SUCCESS", "PAID", "SUCCESS"],
+        "items": { "type": "string", "description": "状态值" }
+      },
+      "create_timeout": { "description": "创建收款请求超时（秒）", "type": "float", "default": 15.0 },
+      "query_timeout": { "description": "查询支付状态超时（秒）", "type": "float", "default": 10.0 }
+    }
+  },
+  "smtp": {
+    "description": "管理员通知邮件（SMTP）",
+    "type": "object",
+    "items": {
+      "server": { "description": "SMTP 服务器", "type": "string", "default": "" },
+      "port": { "description": "SMTP 端口", "type": "int", "default": 465 },
+      "username": { "description": "SMTP 账号", "type": "string", "default": "" },
+      "password": { "description": "SMTP 授权码/密码（不会输出到聊天或日志）", "type": "string", "secret": true, "default": "" },
+      "sender": { "description": "发件人邮箱", "type": "string", "default": "" },
+      "use_tls": { "description": "使用 SSL/TLS（465 端口建议开启）", "type": "bool", "default": true },
+      "admin_email": { "description": "管理员通知邮箱", "type": "string", "default": "" }
+    }
+  },
+  "poll": {
+    "description": "支付状态轮询",
+    "type": "object",
+    "items": {
+      "interval": { "description": "轮询间隔（秒）", "type": "float", "default": 5.0 },
+      "timeout": { "description": "订单支付超时时间（秒），超时后自动关闭", "type": "float", "default": 600.0 },
+      "max_consecutive_failures": { "description": "连续查询失败达到该次数后记录错误日志（不关闭订单）", "type": "int", "default": 20 }
+    }
+  },
+  "order": {
+    "description": "订单设置",
+    "type": "object",
+    "items": {
+      "id_prefix": { "description": "订单号前缀", "type": "string", "default": "SAM" },
+      "expire_minutes": { "description": "二次确认的有效期（分钟）", "type": "int", "default": 30 },
+      "max_email_attempts": { "description": "支付成功后邮件通知的最大尝试次数", "type": "int", "default": 3 }
+    }
+  },
+  "storage": {
+    "description": "数据存储路径（留空则使用插件数据目录）",
+    "type": "object",
+    "items": {
+      "products_path": { "description": "商品数据文件路径", "type": "string", "default": "" },
+      "orders_path": { "description": "订单数据文件路径", "type": "string", "default": "" },
+      "carts_path": { "description": "购物车数据文件路径", "type": "string", "default": "" }
+    }
+  }
+}
