@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 import traceback
+from decimal import Decimal
 from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -151,6 +152,12 @@ async def run_cmd(plugin, text, **kwargs):
     return event, out
 
 
+def make_plugin(config: dict, name: str, ctx=None):
+    """创建插件实例，并给它一个独立的测试数据目录，避免用例之间互相污染。"""
+    os.environ["SAM_TEST_DATA_DIR"] = str(TMP / "data" / "plugin_data" / name)
+    return SamShoppingPlugin(ctx or Context(), config)
+
+
 def texts(out):
     return "\n".join(item.get("text", "") for item in out if item.get("type") == "plain")
 
@@ -282,11 +289,99 @@ def test_service():
 
 
 # ----------------------------------------------------------------------
+# 2.5 代购费规则
+# ----------------------------------------------------------------------
+def test_proxy_fee():
+    proxy_mod = _core("proxy_fee")
+    entries = [proxy_mod.ProxyFeeEntry("智利车厘子", 2, Decimal("3.0"), Decimal("0"))]
+
+    cfg = AppConfig.from_dict({})
+    result = proxy_mod.calc_proxy_fee(entries, cfg.proxy_fee)
+    eq("默认不收取代购费", f"{result.amount:.2f}", "0.00")
+    check("不收时代价明细为空", result.detail_lines()[0].startswith("代购费"))
+
+    cfg = AppConfig.from_dict({"fee": {"fee_mode": "per_order", "fee_per_order": 5}})
+    result = proxy_mod.calc_proxy_fee(entries, cfg.proxy_fee)
+    eq("按次代购费", f"{result.amount:.2f}", "5.00")
+    check("按次明细说明计算方式", any("元/单" in line for line in result.detail_lines()))
+
+    cfg = AppConfig.from_dict({"fee": {"fee_mode": "per_weight", "fee_per_weight": 2}})
+    result = proxy_mod.calc_proxy_fee(entries, cfg.proxy_fee)
+    eq("按重量代购费", f"{result.amount:.2f}", "6.00")
+    check("按重量明细含 kg", any("kg" in line for line in result.detail_lines()))
+
+    cfg = AppConfig.from_dict({"fee": {"fee_mode": "per_item", "fee_per_item": 3}})
+    result = proxy_mod.calc_proxy_fee(entries, cfg.proxy_fee)
+    eq("按件数代购费", f"{result.amount:.2f}", "6.00")
+
+    mixed = [
+        proxy_mod.ProxyFeeEntry("车厘子", 2, Decimal("3.0"), Decimal("1.5")),
+        proxy_mod.ProxyFeeEntry("蓝莓", 3, Decimal("1.5"), Decimal("0")),
+    ]
+    result = proxy_mod.calc_proxy_fee(mixed, cfg.proxy_fee)
+    # 车厘子 2×1.5 = 3；蓝莓 3×3 = 9
+    eq("单商品代购费覆盖全局规则", f"{result.amount:.2f}", "12.00")
+    check("覆盖时标注商品单独设置", any("商品单独设置" in line for line in result.detail_lines()))
+
+    cfg = AppConfig.from_dict({"fee": {"fee_mode": "per_item", "fee_per_item": 1, "fee_min": 10}})
+    result = proxy_mod.calc_proxy_fee(entries, cfg.proxy_fee)
+    eq("代购费最低", f"{result.amount:.2f}", "10.00")
+    check("代购费最低已标记", result.floored)
+
+    cfg = AppConfig.from_dict({"fee": {"fee_mode": "per_item", "fee_per_item": 100, "fee_max": 5}})
+    result = proxy_mod.calc_proxy_fee(entries, cfg.proxy_fee)
+    eq("代购费封顶", f"{result.amount:.2f}", "5.00")
+    check("代购费封顶已标记", result.capped)
+
+    try:
+        AppConfig.from_dict({"fee": {"fee_mode": "bogus"}})
+        check("非法代购费模式应报错", False)
+    except Exception:  # noqa: BLE001
+        check("非法代购费模式应报错", True)
+
+    try:
+        AppConfig.from_dict({"fee": {"fee_mode": "per_weight", "fee_per_weight": 0}})
+        check("按重量但费率为 0 应报错", False)
+    except Exception:  # noqa: BLE001
+        check("按重量但费率为 0 应报错", True)
+
+
+def test_proxy_fee_service():
+    data_dir = TMP / "fee"
+    cfg = AppConfig.from_dict({"fee": {"fee_mode": "per_item", "fee_per_item": 2, "fee_min": 1}})
+    repo = Repository(data_dir, cfg.storage)
+    svc = SamService(repo, cfg)
+
+    p1 = svc.add_product("水果", "车厘子", "车厘子", "89.9", "1.5", "5")
+    p2 = svc.add_product("水果", "车厘子", "蓝莓", "29.9", "0.5")
+    eq("商品保存单件代购费", f"{p1.fee:.2f}", "5.00")
+    eq("未填时代购费为 0", f"{p2.fee:.2f}", "0.00")
+
+    svc.cart_add("u1", p1, 2)
+    svc.cart_add("u1", p2, 3)
+    result = svc.calc_proxy_fee("u1")
+    # 车厘子 2×5 = 10；蓝莓 3×2 = 6
+    eq("服务层代购费", f"{result.amount:.2f}", "16.00")
+    check("服务层明细含单件说明", any("5 元/件" in line for line in result.detail_lines()))
+
+    order = svc.build_order("u1", "测试用户")
+    eq("订单记录代购费", f"{order.proxy_fee:.2f}", "16.00")
+    expected_total = f"{order.goods_amount + order.freight + order.proxy_fee:.2f}"
+    eq("订单总额含代购费", f"{order.total:.2f}", expected_total)
+    check("订单保存代购费明细", any("代购费" in line for line in order.proxy_fee_detail))
+
+    repo2 = Repository(data_dir, cfg.storage)
+    svc2 = SamService(repo2, cfg)
+    restored = svc2.get_order(order.order_id)
+    eq("重启后订单代购费不丢失", f"{restored.proxy_fee:.2f}", "16.00")
+
+
+# ----------------------------------------------------------------------
 # 3. 指令流程
 # ----------------------------------------------------------------------
 async def test_commands():
     ctx = Context()
-    plugin = SamShoppingPlugin(ctx, {"general": {"admins": ["admin1"]}})
+    plugin = make_plugin({"general": {"admins": ["admin1"]}}, "cmd", ctx)
     plugin.payment = FakePayment()
     plugin.mailer = FakeMailer()
 
@@ -295,6 +390,7 @@ async def test_commands():
     check("help 含极速达规则", "极速达" in texts(out) and "99" in texts(out))
     check("help 含全国配规则", "全国配" in texts(out) and "299" in texts(out))
     check("help 含满减说明", "每满 100 元" in texts(out))
+    check("help 含代购费规则", "代购费" in texts(out))
 
     _, out = await run_cmd(plugin, "sam's menu")
     check("空菜单提示", "还没有商品分类" in texts(out))
@@ -396,8 +492,7 @@ async def test_commands():
 # 4. 支付失败
 # ----------------------------------------------------------------------
 async def test_payment_failure():
-    ctx = Context()
-    plugin = SamShoppingPlugin(ctx, {"general": {"admins": ["admin1"]}})
+    plugin = make_plugin({"general": {"admins": ["admin1"]}}, "payfail")
     plugin.payment = FakePayment(ok=False, message="网关超时")
     plugin.mailer = FakeMailer()
 
@@ -408,6 +503,65 @@ async def test_payment_failure():
     check("支付失败给出提示", "生成收款二维码失败" in texts(out))
     eq("支付失败不发送邮件", len(plugin.mailer.sent), 0)
     eq("支付失败订单被取消", len(plugin.service.pending_orders()), 0)
+
+
+# ----------------------------------------------------------------------
+# 4.5 代购费指令流程
+# ----------------------------------------------------------------------
+async def test_proxy_fee_commands():
+    plugin = make_plugin(
+        {
+            "general": {"admins": ["admin1"]},
+            "fee": {"fee_mode": "per_item", "fee_per_item": 2, "fee_label": "跑腿费"},
+        },
+        "fee",
+    )
+    plugin.payment = FakePayment()
+    plugin.mailer = FakeMailer()
+
+    _, out = await run_cmd(plugin, "sam's help")
+    check("help 说明代购费计费方式", "跑腿费" in texts(out) and "按件数" in texts(out))
+
+    _, out = await run_cmd(
+        plugin, "sam's add 水果 车厘子 车厘子 89.9 1.5 5", sender_id="admin1"
+    )
+    check("add 带单件代购费", "代购费" in texts(out))
+
+    _, out = await run_cmd(
+        plugin, "sam's add 水果 车厘子 蓝莓 29.9 0.5", sender_id="admin1"
+    )
+    check("add 不填代购费", "已添加商品" in texts(out))
+
+    _, out = await run_cmd(plugin, "sam's menu 水果 车厘子")
+    check("menu 显示单件代购费", "单件代购费" in texts(out))
+
+    _, out = await run_cmd(plugin, "sam's buy 车厘子 2")
+    _, out = await run_cmd(plugin, "sam's buy 蓝莓 3")
+
+    _, out = await run_cmd(plugin, "sam's pay")
+    preview = texts(out)
+    check("pay 展示代购费费目", "跑腿费" in preview)
+    check("pay 展示单件代购费计算", "5 元/件" in preview)
+    check("pay 展示全局按件计算", "2.00 元/件" in preview)
+    check("pay 展示代购费合计", "跑腿费合计" in preview)
+    check("pay 展示应付总额", "应付总额" in preview)
+
+    _, out = await run_cmd(plugin, "确认")
+    check("下单成功", "已创建" in texts(out))
+    orders = plugin.service.pending_orders()
+    eq("下单数量", len(orders), 1)
+    order = orders[0]
+    eq("下单后代购费", f"{order.proxy_fee:.2f}", "16.00")
+    expected_total = f"{order.goods_amount + order.freight + order.proxy_fee:.2f}"
+    eq("下单后总额含代购费", f"{order.total:.2f}", expected_total)
+
+    plugin.payment.paid = True
+    await plugin._check_pending_orders()
+    eq("支付成功发送邮件", len(plugin.mailer.sent), 1)
+    subject, body = plugin.mailer.sent[0]
+    check("邮件主题含代购消息", "有新的代购消息" in subject)
+    check("邮件正文含代购费", "跑腿费" in body)
+    check("邮件正文含代购费明细", "5 元/件" in body)
 
 
 # ----------------------------------------------------------------------
@@ -428,8 +582,7 @@ def test_config():
     except Exception:  # noqa: BLE001
         check("非法配送方式应报错", True)
 
-    ctx = Context()
-    plugin = SamShoppingPlugin(ctx, {"general": {"wake_word": "山姆", "admins": []}})
+    plugin = make_plugin({"general": {"wake_word": "山姆", "admins": []}}, "parse")
     eq("解析唤醒词", plugin._parse("山姆 menu")[0], "menu")
     eq("解析唤醒词带斜杠", plugin._parse("/山姆 menu")[0], "menu")
     eq("解析 @ 前缀", plugin._parse("@机器人 山姆 menu")[0], "menu")
@@ -444,8 +597,11 @@ def test_config():
 async def main():
     test_freight()
     test_service()
+    test_proxy_fee()
+    test_proxy_fee_service()
     await test_commands()
     await test_payment_failure()
+    await test_proxy_fee_commands()
     test_config()
 
     failed = [item for item in RESULTS if not item[1]]

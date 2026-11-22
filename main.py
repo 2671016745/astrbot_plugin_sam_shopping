@@ -65,6 +65,8 @@ BARE_CLEAR = {"确认清空", "清空确认", "确定清空"}
 BARE_CANCEL = {"取消", "cancel", "no", "n", "算了"}
 
 CHANNEL_WORDS = {"express", "national", "极速达", "全国配"}
+# add 指令里用来占位「重量」的写法（表示使用默认重量）
+WEIGHT_PLACEHOLDERS = {"-", "—", "–", "/", "\\", "无", "none", "null", "skip", "默认"}
 
 
 class SamShoppingPlugin(Star):
@@ -311,10 +313,10 @@ class SamShoppingPlugin(Star):
             return
 
         order = self.service.preview_order(user_id, user_name, channel)
-        result = self.service.calc_cart_freight(user_id, channel)
+        freight, proxy = self.service.preview_fees(user_id, channel)
         self._set_pending(user_id, "pay", {"channel": channel})
         yield event.plain_result(
-            messages.format_order_preview(order, result.detail_lines())
+            messages.format_order_preview(order, messages.format_fee_lines(freight, proxy))
         )
 
     async def _do_pay(self, event: AstrMessageEvent, pending: dict):
@@ -410,33 +412,47 @@ class SamShoppingPlugin(Star):
             return
         if len(args) < 4:
             yield event.plain_result(
-                "格式：add <大分类> <小分类> <商品名称> <价格> [重量kg]\n"
-                "例如：add 水果 车厘子 智利车厘子 89.9 1.5"
+                "格式：add <大分类> <小分类> <商品名称> <价格> [重量kg] [代购费元/件]\n"
+                "例如：add 水果 车厘子 智利车厘子 89.9 1.5\n"
+                "      add 水果 车厘子 智利车厘子 89.9 1.5 5\n"
+                "      add 水果 车厘子 智利车厘子 89.9 - 5（重量用默认值）"
             )
             return
         category, subcategory = args[0], args[1]
-        # 末尾最多两个数字依次是「价格」和可选的「重量」，其余是商品名称
-        trailing_numbers = 0
-        while trailing_numbers < 2 and len(args) - 1 - trailing_numbers >= 3:
-            if self._is_number(args[len(args) - 1 - trailing_numbers]):
-                trailing_numbers += 1
+        # 末尾最多三个数字依次是「价格」「重量」「代购费」，其余是商品名称。
+        # 重量可用「-」占位，表示使用默认重量。
+        slots: list[str] = []
+        index = len(args) - 1
+        while len(slots) < 3 and index >= 3:
+            token = args[index]
+            if self._is_number(token) or token in WEIGHT_PLACEHOLDERS:
+                slots.append(token)
+                index -= 1
             else:
                 break
-        if trailing_numbers == 0:
+        slots.reverse()
+        if not slots or not self._is_number(slots[0]):
             yield event.plain_result("无法识别价格，请在商品名称之后填写价格。")
             return
-        price_index = len(args) - trailing_numbers
+        price_index = len(args) - len(slots)
         name = " ".join(args[2:price_index]).strip()
         if not name:
             yield event.plain_result("商品名称不能为空。")
             return
-        weight = args[price_index + 1] if trailing_numbers >= 2 else None
-        product = self.service.add_product(category, subcategory, name, args[price_index], weight)
-        yield event.plain_result(
-            f"已添加商品：{product.name}\n"
-            f"分类：{product.category}/{product.subcategory}\n"
-            f"价格：{product.price} 元\n重量：{product.weight_kg} kg"
+        weight = slots[1] if len(slots) >= 2 and self._is_number(slots[1]) else None
+        fee = slots[2] if len(slots) >= 3 and self._is_number(slots[2]) else None
+        product = self.service.add_product(
+            category, subcategory, name, slots[0], weight, fee
         )
+        lines = [
+            f"已添加商品：{product.name}",
+            f"分类：{product.category}/{product.subcategory}",
+            f"价格：{product.price} 元",
+            f"重量：{product.weight_kg} kg",
+        ]
+        if product.fee > 0:
+            lines.append(f"代购费：{product.fee} 元/件（优先于全局规则）")
+        yield event.plain_result("\n".join(lines))
 
     @staticmethod
     def _is_number(text: str) -> bool:

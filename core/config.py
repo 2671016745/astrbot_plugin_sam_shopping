@@ -131,6 +131,40 @@ class FreightRuleConfig:
 
 
 @dataclass(frozen=True)
+class ProxyFeeConfig:
+    """代购费规则。
+
+    - ``fee_mode``：``none`` / ``per_order``（按次）/ ``per_weight``（按重量）
+      / ``per_item``（按件数）。
+    - ``fee_per_order`` / ``fee_per_weight`` / ``fee_per_item``：对应费率。
+    - ``fee_min`` / ``fee_max``：单笔订单代购费的最低与封顶（0 表示不限制）。
+    - ``fee_label``：账单上显示的费目名称，默认“代购费”。
+    """
+
+    fee_mode: str = "none"
+    fee_per_order: float = 0.0
+    fee_per_weight: float = 0.0
+    fee_per_item: float = 0.0
+    fee_min: float = 0.0
+    fee_max: float = 0.0
+    fee_label: str = "代购费"
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any] | None, defaults: "ProxyFeeConfig | None" = None) -> "ProxyFeeConfig":
+        data = data or {}
+        d = defaults or cls()
+        return cls(
+            fee_mode=_str(data.get("fee_mode"), d.fee_mode),
+            fee_per_order=_float(data.get("fee_per_order"), d.fee_per_order),
+            fee_per_weight=_float(data.get("fee_per_weight"), d.fee_per_weight),
+            fee_per_item=_float(data.get("fee_per_item"), d.fee_per_item),
+            fee_min=_float(data.get("fee_min"), d.fee_min),
+            fee_max=_float(data.get("fee_max"), d.fee_max),
+            fee_label=_str(data.get("fee_label"), d.fee_label) or "代购费",
+        )
+
+
+@dataclass(frozen=True)
 class PaymentConfig:
     gateway: str = ""
     pid: str = ""
@@ -232,6 +266,11 @@ class AppConfig:
     poll: PollConfig = PollConfig()
     storage: StorageConfig = StorageConfig()
     order: OrderConfig = OrderConfig()
+    proxy_fee: ProxyFeeConfig = ProxyFeeConfig()
+
+    @property
+    def fee_label(self) -> str:
+        return self.proxy_fee.fee_label or "代购费"
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any] | None) -> "AppConfig":
@@ -243,6 +282,7 @@ class AppConfig:
         poll = _section(raw, "poll")
         storage = _section(raw, "storage")
         order = _section(raw, "order")
+        proxy_fee = _section(raw, "fee")
 
         wake_word = _str(general.get("wake_word"), "sam's")
         default_channel = _str(general.get("default_channel"), CHANNEL_EXPRESS).lower()
@@ -319,6 +359,7 @@ class AppConfig:
                 expire_minutes=_int(order.get("expire_minutes"), 30),
                 max_email_attempts=_int(order.get("max_email_attempts"), 3),
             ),
+            proxy_fee=ProxyFeeConfig.from_dict(proxy_fee),
         )
         cfg.validate()
         return cfg
@@ -344,6 +385,33 @@ class AppConfig:
             raise ConfigError("轮询间隔 interval 必须大于 0")
         if self.default_weight_kg < 0:
             raise ConfigError("默认重量 default_weight_kg 不能为负数")
+        self._validate_proxy_fee()
+
+    def _validate_proxy_fee(self) -> None:
+        fee = self.proxy_fee
+        modes = ("none", "per_order", "per_weight", "per_item")
+        if fee.fee_mode not in modes:
+            raise ConfigError(
+                "代购费模式 fee_mode 只能是 none / per_order / per_weight / per_item，"
+                f"当前为 {fee.fee_mode!r}"
+            )
+        for name, value in (
+            ("fee_per_order", fee.fee_per_order),
+            ("fee_per_weight", fee.fee_per_weight),
+            ("fee_per_item", fee.fee_per_item),
+            ("fee_min", fee.fee_min),
+            ("fee_max", fee.fee_max),
+        ):
+            if value < 0:
+                raise ConfigError(f"代购费 {name} 不能为负数")
+        if fee.fee_max > 0 and fee.fee_min > fee.fee_max:
+            raise ConfigError("代购费最低 fee_min 不能大于封顶 fee_max")
+        if fee.fee_mode == "per_order" and fee.fee_per_order <= 0:
+            raise ConfigError("代购费模式为按次时，fee_per_order 必须大于 0")
+        if fee.fee_mode == "per_weight" and fee.fee_per_weight <= 0:
+            raise ConfigError("代购费模式为按重量时，fee_per_weight 必须大于 0")
+        if fee.fee_mode == "per_item" and fee.fee_per_item <= 0:
+            raise ConfigError("代购费模式为按件数时，fee_per_item 必须大于 0")
 
     def rule_for(self, channel: str) -> FreightRuleConfig:
         if channel == CHANNEL_NATIONAL:

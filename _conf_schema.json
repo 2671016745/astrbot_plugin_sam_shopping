@@ -96,6 +96,24 @@
       }
     }
   },
+  "fee": {
+    "description": "代购费规则",
+    "type": "object",
+    "items": {
+      "fee_mode": {
+        "description": "计费方式：none 不收 / per_order 按次 / per_weight 按重量 / per_item 按件数",
+        "type": "string",
+        "default": "none",
+        "options": ["none", "per_order", "per_weight", "per_item"]
+      },
+      "fee_per_order": { "description": "按次：每单固定代购费（元）", "type": "float", "default": 0.0 },
+      "fee_per_weight": { "description": "按重量：每 kg 代购费（元/kg）", "type": "float", "default": 0.0 },
+      "fee_per_item": { "description": "按件数：每件代购费（元/件）", "type": "float", "default": 0.0 },
+      "fee_min": { "description": "单笔订单代购费最低（元）", "type": "float", "default": 0.0 },
+      "fee_max": { "description": "单笔订单代购费封顶（元），0 表示不封顶", "type": "float", "default": 0.0 },
+      "fee_label": { "description": "账单上显示的费目名称", "type": "string", "default": "代购费" }
+    }
+  },
   "payment": {
     "description": "易支付网关",
     "type": "object",

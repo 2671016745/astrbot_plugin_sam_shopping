@@ -26,7 +26,7 @@ def format_help(config: AppConfig, has_products: bool) -> str:
         f"{wake} basket delete [序号] —— 删除购物车中的商品",
         f"{wake} basket clear —— 清空购物车（需二次确认）",
         f"{wake} pay [极速达|全国配] —— 查看费用明细并下单，随后回复「确认支付」",
-        f"{wake} add <大分类> <小分类> <商品名称> <价格> [重量kg] —— 管理员添加商品",
+        f"{wake} add <大分类> <小分类> <商品名称> <价格> [重量kg] [代购费元/件] —— 管理员添加商品",
         "",
         "配送方式与运费规则：",
     ]
@@ -57,6 +57,32 @@ def format_help(config: AppConfig, has_products: bool) -> str:
     lines.append(
         f"满减基数：{_amount_base_text(config)}；金额单位元，重量单位 kg，结果保留两位小数。"
     )
+    lines.extend(["", "代购费规则："])
+    fee = config.proxy_fee
+    label = config.fee_label or "代购费"
+    if fee.fee_mode == "none":
+        lines.append(f"· 当前不收取{label}。")
+    else:
+        mode_names = {"per_order": "按次", "per_weight": "按重量", "per_item": "按件数"}
+        lines.append(f"· {label}计费方式：{mode_names.get(fee.fee_mode, fee.fee_mode)}。")
+        if fee.fee_mode == "per_order":
+            lines.append(f"  - 每单固定收取 { _money(fee.fee_per_order) } 元，与商品数量、重量无关。")
+        elif fee.fee_mode == "per_weight":
+            lines.append(
+                f"  - 按购物车总重量计费：{ _money(fee.fee_per_weight) } 元/kg × 总重量。"
+            )
+        else:
+            lines.append(
+                f"  - 按购物车总件数计费：{ _money(fee.fee_per_item) } 元/件 × 总件数。"
+            )
+        lines.append(
+            "  - 单个商品可在添加时单独指定代购费（元/件），"
+            "设置后该商品按“数量 × 单件代购费”计算，优先于上面的全局规则。"
+        )
+        if fee.fee_min > 0:
+            lines.append(f"  - 每单{label}最低 { _money(fee.fee_min) } 元。")
+        if fee.fee_max > 0:
+            lines.append(f"  - 每单{label}最高 { _money(fee.fee_max) } 元。")
     if not has_products:
         lines.append("")
         lines.append("当前还没有商品，管理员可用上面的 add 指令添加。")
@@ -94,10 +120,10 @@ def format_menu_products(category: str, subcategory: str, products: list[Product
         return f"「{category}/{subcategory}」下暂时没有商品。"
     lines = [f"「{category}/{subcategory}」商品：", ""]
     for index, product in enumerate(products, start=1):
-        lines.append(
-            f"{index}. {product.name} —— {_money(product.price)} 元"
-            f"（{_money(product.weight_kg)} kg）"
-        )
+        extra = f"（{_money(product.weight_kg)} kg）"
+        if product.fee > 0:
+            extra += f"，单件代购费 {_money(product.fee)} 元/件"
+        lines.append(f"{index}. {product.name} —— {_money(product.price)} 元{extra}")
     lines.append("")
     lines.append("发送「buy <商品名称> <数量>」加入购物车。")
     return "\n".join(lines)
@@ -115,7 +141,7 @@ def format_cart(items: list[CartItem]) -> str:
             f"{index}. {item.product.name} × {item.qty} —— {_money(subtotal)} 元"
         )
     lines.append("")
-    lines.append(f"合计：{_money(total)} 元（未含运费）")
+    lines.append(f"合计：{_money(total)} 元（未含运费与代购费）")
     return "\n".join(lines)
 
 
@@ -126,6 +152,22 @@ def format_cart_numbered(items: list[CartItem]) -> str:
     lines.append("")
     lines.append("回复序号即可删除，例如「2」；或发送「basket delete 2」。")
     return "\n".join(lines)
+
+
+def format_fee_lines(freight, proxy) -> list[str]:
+    """把运费明细与代购费明细拼成一段，末行为应付总额。
+
+    ``freight`` 为 ``FreightResult``，``proxy`` 为 ``ProxyFeeResult``。
+    """
+    lines = list(freight.detail_lines()[:-1])
+    lines.extend(proxy.detail_lines())
+    lines.append(f"应付总额：{_money(freight.total + proxy.amount)} 元")
+    return lines
+
+
+def format_proxy_fee_detail(order: Order) -> list[str]:
+    """订单/邮件里回显代购费的计算明细。"""
+    return [str(line) for line in order.proxy_fee_detail]
 
 
 def format_order_preview(order: Order, freight_lines: list[str]) -> str:
@@ -151,11 +193,20 @@ def format_order_created(order: Order, expire_minutes: int = 30) -> str:
 
 
 def format_order_paid(order: Order) -> str:
-    return (
-        f"订单 {order.order_id} 已支付成功，实付 {_money(order.total)} 元。\n"
+    lines = [
+        f"订单 {order.order_id} 已支付成功，实付 {_money(order.total)} 元。",
         f"配送方式：{CHANNEL_LABELS.get(order.channel, order.channel)}，"
-        f"我们会尽快为你处理，感谢购买！"
-    )
+        f"我们会尽快为你处理，感谢购买！",
+        "",
+        "费用明细：",
+        f"· 商品金额 {_money(order.goods_amount)} 元",
+        f"· 运费 {_money(order.freight)} 元",
+    ]
+    if order.proxy_fee > 0:
+        lines.append(f"· 代购费 {_money(order.proxy_fee)} 元")
+        lines.extend(f"  {line}" for line in format_proxy_fee_detail(order))
+    lines.append(f"· 应付总额 {_money(order.total)} 元")
+    return "\n".join(lines)
 
 
 def format_order(order: Order) -> str:
@@ -173,6 +224,9 @@ def format_order(order: Order) -> str:
     lines.append(f"商品金额：{_money(order.goods_amount)} 元")
     lines.append(f"商品重量：{_money(order.weight)} kg")
     lines.append(f"运费：{_money(order.freight)} 元")
+    if order.proxy_fee > 0:
+        lines.append(f"代购费：{_money(order.proxy_fee)} 元")
+        lines.extend(f"  {line}" for line in format_proxy_fee_detail(order))
     lines.append(f"应付总额：{_money(order.total)} 元")
     if order.paid_at:
         lines.append(f"支付时间：{order.paid_at}")
@@ -206,6 +260,9 @@ def format_email_body(order: Order, shop_name: str) -> str:
     lines.append(f"配送方式：{CHANNEL_LABELS.get(order.channel, order.channel)}")
     lines.append(f"商品重量：{_money(order.weight)} kg")
     lines.append(f"运费：{_money(order.freight)} 元")
+    if order.proxy_fee > 0:
+        lines.append(f"代购费：{_money(order.proxy_fee)} 元")
+        lines.extend(f"  {line}" for line in format_proxy_fee_detail(order))
     lines.append(f"应付总额：{_money(order.total)} 元")
     if order.remark:
         lines.append(f"备注：{order.remark}")

@@ -47,10 +47,13 @@ class Product:
     category: str
     subcategory: str
     created_at: str = ""
+    fee: Decimal = Decimal("0")
+    """单件代购费（元/件）；大于 0 时优先于全局代购费规则。"""
 
     def __post_init__(self) -> None:
         self.price = _dec(self.price)
         self.weight_kg = _dec(self.weight_kg)
+        self.fee = _dec(self.fee)
 
     @property
     def weight(self) -> Decimal:
@@ -65,6 +68,7 @@ class Product:
             "category": self.category,
             "subcategory": self.subcategory,
             "created_at": self.created_at,
+            "fee": str(self.fee),
         }
 
     @classmethod
@@ -77,6 +81,7 @@ class Product:
             category=str(data.get("category") or ""),
             subcategory=str(data.get("subcategory") or ""),
             created_at=str(data.get("created_at") or ""),
+            fee=_dec(data.get("fee")),
         )
 
 
@@ -145,6 +150,10 @@ class Order:
     weight: Decimal
     freight: Decimal
     total: Decimal
+    proxy_fee: Decimal = Decimal("0")
+    """代购费（元）。"""
+    proxy_fee_detail: list[str] = field(default_factory=list)
+    """代购费计算明细（已格式化的文本行），用于账单与邮件回显。"""
     status: str = ORDER_PENDING
     created_at: str = ""
     created_ts: float = 0.0
@@ -162,6 +171,8 @@ class Order:
         self.weight = _dec(self.weight)
         self.freight = _dec(self.freight)
         self.total = _dec(self.total)
+        self.proxy_fee = _dec(self.proxy_fee)
+        self.proxy_fee_detail = list(self.proxy_fee_detail or [])
 
     @property
     def status_label(self) -> str:
@@ -178,6 +189,8 @@ class Order:
             "weight": str(self.weight),
             "freight": str(self.freight),
             "total": str(self.total),
+            "proxy_fee": str(self.proxy_fee),
+            "proxy_fee_detail": list(self.proxy_fee_detail),
             "status": self.status,
             "created_at": self.created_at,
             "created_ts": self.created_ts,
@@ -203,6 +216,8 @@ class Order:
             weight=_dec(data.get("weight")),
             freight=_dec(data.get("freight")),
             total=_dec(data.get("total")),
+            proxy_fee=_dec(data.get("proxy_fee")),
+            proxy_fee_detail=[str(x) for x in (data.get("proxy_fee_detail") or [])],
             status=str(data.get("status") or ORDER_PENDING),
             created_at=str(data.get("created_at") or ""),
             created_ts=float(data.get("created_ts") or 0.0),

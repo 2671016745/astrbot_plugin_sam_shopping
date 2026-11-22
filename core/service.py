@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 from decimal import Decimal
 
-from . import freight
+from . import freight, proxy_fee
 from .config import (
     AMOUNT_BASE_GOODS,
     CHANNEL_EXPRESS,
@@ -28,6 +28,7 @@ from .models import (
     Product,
     new_id,
 )
+from .proxy_fee import ProxyFeeEntry
 from .store import Repository
 
 MAX_CATEGORY_LEN = 50
@@ -35,6 +36,8 @@ MAX_NAME_LEN = 50
 MAX_PRICE = Decimal("1000000")
 MAX_WEIGHT = Decimal("1000")
 MAX_QTY = 999
+MAX_FEE = Decimal("100000")
+WEIGHT_SENTINELS = {"-", "—", "–", "/", "\\", "无", "none", "null", "skip", "默认"}
 
 
 class ServiceError(Exception):
@@ -77,7 +80,7 @@ def _parse_weight(value, default: float) -> Decimal:
     if value is None:
         return Decimal(str(default))
     text = str(value).strip()
-    if not text:
+    if not text or text.lower() in WEIGHT_SENTINELS:
         return Decimal(str(default))
     try:
         weight = Decimal(text)
@@ -88,6 +91,24 @@ def _parse_weight(value, default: float) -> Decimal:
     if weight > MAX_WEIGHT:
         raise ServiceError(f"重量不能超过 {MAX_WEIGHT} kg")
     return weight
+
+
+def _parse_fee(value) -> Decimal:
+    """解析单件代购费：允许为空/0（表示用全局规则），不允许负数。"""
+    if value is None:
+        return Decimal("0")
+    text = str(value).strip()
+    if not text or text.lower() in WEIGHT_SENTINELS:
+        return Decimal("0")
+    try:
+        fee = Decimal(text)
+    except Exception as exc:  # noqa: BLE001
+        raise ServiceError(f"代购费无效：{value}") from exc
+    if not fee.is_finite() or fee < 0:
+        raise ServiceError("代购费不能为负数")
+    if fee > MAX_FEE:
+        raise ServiceError(f"代购费不能超过 {MAX_FEE} 元/件")
+    return fee
 
 
 def _parse_qty(value) -> int:
@@ -176,12 +197,14 @@ class SamService:
         name: str,
         price,
         weight_kg=None,
+        fee=None,
     ) -> Product:
         cat = _clean_text(category, MAX_CATEGORY_LEN, "大分类")
         sub = _clean_text(subcategory, MAX_CATEGORY_LEN, "小分类")
         prod_name = _clean_text(name, MAX_NAME_LEN, "商品名称")
         prod_price = _parse_price(price)
         weight = _parse_weight(weight_kg, self.config.default_weight_kg)
+        product_fee = _parse_fee(fee)
 
         cats = self._categories()
         if cat not in cats or not isinstance(cats[cat], dict):
@@ -202,6 +225,7 @@ class SamService:
             category=cat,
             subcategory=sub,
             created_at=_now_str(),
+            fee=product_fee,
         )
         subs[sub].append(product.to_dict())
         self.repo.save_products()
@@ -320,6 +344,38 @@ class SamService:
             amount_base=self.config.freight_amount_base or AMOUNT_BASE_GOODS,
         )
 
+    def calc_proxy_fee(self, user_id: str) -> proxy_fee.ProxyFeeResult:
+        """按当前配置计算该用户购物车的代购费。"""
+        items = self.cart(user_id)
+        if not items:
+            raise ServiceError("购物车是空的")
+        entries = [
+            ProxyFeeEntry(
+                name=item.product.name,
+                qty=item.qty,
+                weight=item.weight,
+                product_fee=item.product.fee,
+            )
+            for item in items
+        ]
+        return proxy_fee.calc_proxy_fee(entries, self.config.proxy_fee)
+
+    def preview_fees(self, user_id: str, channel: str | None = None):
+        """一次性返回运费与代购费试算结果。"""
+        return self.calc_cart_freight(user_id, channel), self.calc_proxy_fee(user_id)
+
+    def proxy_fee_rules_text(self) -> str:
+        """代购费规则的简短说明，用于帮助文本。"""
+        cfg = self.config.proxy_fee
+        label = self.config.fee_label
+        if cfg.fee_mode == proxy_fee.MODE_NONE:
+            return f"当前{label}：不收取"
+        if cfg.fee_mode == proxy_fee.MODE_PER_ORDER:
+            return f"当前{label}：按次 {cfg.fee_per_order} 元/单"
+        if cfg.fee_mode == proxy_fee.MODE_PER_WEIGHT:
+            return f"当前{label}：按重量 {cfg.fee_per_weight} 元/kg"
+        return f"当前{label}：按件数 {cfg.fee_per_item} 元/件"
+
     def _compose_order(
         self,
         user_id: str,
@@ -332,6 +388,7 @@ class SamService:
             raise ServiceError("购物车是空的，无法下单")
         resolved = self.resolve_channel(channel)
         result = self.calc_cart_freight(user_id, resolved)
+        fee = self.calc_proxy_fee(user_id)
         return Order(
             order_id=self._new_order_id(),
             user_id=user_id,
@@ -350,7 +407,9 @@ class SamService:
             goods_amount=result.goods_amount,
             weight=result.weight,
             freight=result.freight,
-            total=result.total,
+            proxy_fee=fee.amount,
+            proxy_fee_detail=list(fee.detail_lines()) if fee.amount > 0 else [],
+            total=freight.money(result.goods_amount + result.freight + fee.amount),
             status=ORDER_PENDING,
             created_at=_now_str(),
             created_ts=self._clock(),
