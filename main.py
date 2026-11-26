@@ -13,14 +13,12 @@
        sam's pay 极速达
        sam's add 水果 车厘子 智利车厘子 89.9 1.5
 
-2. 官方指令组 ``sam``（出现在 AstrBot WebUI 的「指令」页，可改名 / 加别名 / 禁用）：
+2. 官方指令组（出现在 AstrBot WebUI 的「指令」页，可改名 / 加别名 / 禁用）。
+   主指令 `山姆`，别名 `sam's` 与 `sam`，三者等价：
 
-       /sam help
-       /sam menu 水果 车厘子
-       /sam buy 牛奶 2
-       /sam basket delete 1
+       /山姆 menu 水果 车厘子
+       /sam's buy 牛奶 2
        /sam pay 极速达
-       /sam add 水果 车厘子 智利车厘子 89.9 1.5 5
 """
 from __future__ import annotations
 
@@ -75,13 +73,14 @@ BARE_CONFIRM = {"确认", "确定", "是的", "yes", "y", "ok", "好", "好哒"}
 BARE_CLEAR = {"确认清空", "清空确认", "确定清空"}
 BARE_CANCEL = {"取消", "cancel", "no", "n", "算了"}
 
-CHANNEL_WORDS = {"express", "national", "极速达", "全国配"}
-# add 指令里用来占位「重量」的写法（表示使用默认重量）
-WEIGHT_PLACEHOLDERS = {"-", "—", "–", "/", "\\", "无", "none", "null", "skip", "默认"}
-
-# 官方指令（会出现在 AstrBot WebUI 的指令管理里，可改名/加别名/禁用）
-COMMAND_GROUP_NAME = "sam"
-COMMAND_SUB_NAMES = ("help", "menu", "buy", "basket", "pay", "add")
+from .core.constants import (
+    CHANNEL_WORDS,
+    COMMAND_GROUP_ALIASES,
+    COMMAND_GROUP_NAME,
+    COMMAND_GROUP_NAMES,
+    COMMAND_SUB_NAMES,
+    WEIGHT_PLACEHOLDERS,
+)
 
 
 class SamShoppingPlugin(Star):
@@ -184,11 +183,12 @@ class SamShoppingPlugin(Star):
             return
         if not text:
             return
-        # 官方指令（/sam xxx）由 command handler 处理，这里不重复响应
-        if self._is_official_command(text):
-            return
         parsed = self._parse(text)
         if parsed is None:
+            return
+        # 唤醒词与官方指令同名时（例如唤醒词配成 sam's），官方指令交给 command handler，
+        # 这里不再回复，避免同一条消息被两套逻辑各回一次。
+        if getattr(event, "is_at_or_wake_command", False) and self._is_official_command(text):
             return
         try:
             async for item in self._dispatch(parsed, event):
@@ -201,9 +201,11 @@ class SamShoppingPlugin(Star):
 
     @staticmethod
     def _is_official_command(text: str) -> bool:
-        """判断是否是官方指令组 ``sam ...``（避免唤醒词与官方指令重复响应）。"""
+        """判断是否是官方指令组（主指令或别名开头），避免唤醒词与官方指令重复响应。"""
         tokens = re.sub(r"\s+", " ", text.strip()).split(" ")
-        if not tokens or tokens[0].lower() != COMMAND_GROUP_NAME:
+        if not tokens or tokens[0].lower() not in {
+            name.lower() for name in COMMAND_GROUP_NAMES
+        }:
             return False
         if len(tokens) == 1:
             return True
@@ -219,7 +221,7 @@ class SamShoppingPlugin(Star):
     # ------------------------------------------------------------------
     # 官方指令（WebUI「指令」页可见，可改名 / 加别名 / 禁用）
     # ------------------------------------------------------------------
-    @filter.command_group(COMMAND_GROUP_NAME)
+    @filter.command_group(COMMAND_GROUP_NAME, alias=COMMAND_GROUP_ALIASES)
     async def sam(self, event: AstrMessageEvent) -> None:
         """山姆代购：menu / buy / basket / pay / add / help"""
 

@@ -68,12 +68,23 @@ def eq(name: str, actual, expected) -> None:
 # 假事件 / 假支付 / 假邮件
 # ----------------------------------------------------------------------
 class FakeEvent:
-    def __init__(self, text, sender_id="u1", sender_name="测试用户", umo="umo|u1", admin=False):
+    def __init__(
+        self,
+        text,
+        sender_id="u1",
+        sender_name="测试用户",
+        umo="umo|u1",
+        admin=False,
+        at_or_wake=False,
+    ):
         self._text = text
         self.sender_id = sender_id
         self.sender_name = sender_name
         self.umo = umo
         self.admin_flag = admin
+        # AstrBot 在 waking_check 阶段会设置该标志：群聊需 @bot 或 / 前缀，私聊恒为 True
+        self.is_at_or_wake_command = at_or_wake
+        self.message_str = text
         self.results = []
 
     def get_message_str(self):
@@ -611,7 +622,7 @@ async def test_official_commands():
     check("识别官方指令 sam menu", plugin._is_official_command("sam menu 水果"))
     check("识别官方指令组本身", plugin._is_official_command("sam"))
     check("大小写不敏感", plugin._is_official_command("SAM pay"))
-    check("唤醒词写法不算官方指令", not plugin._is_official_command("sam's menu"))
+    check("唤醒词 sam's 同时是官方别名", plugin._is_official_command("sam's menu"))
     check("无关消息不算官方指令", not plugin._is_official_command("今天天气怎么样"))
 
     eq(
@@ -624,6 +635,23 @@ async def test_official_commands():
     event = FakeEvent("sam menu 水果")
     got = [item async for item in plugin.on_message(event)]
     check("on_message 不重复响应官方指令", len(got) == 0, f"got={got}")
+
+    # 唤醒词与官方指令同名（默认 wake_word=sam's，别名里也有 sam's）时不能回两次
+    plugin_cn = make_plugin(
+        {"general": {"wake_word": "山姆", "admins": ["admin1"]}}, "official_dup"
+    )
+    event = FakeEvent("山姆 menu 水果", at_or_wake=True)
+    got = [item async for item in plugin_cn.on_message(event)]
+    check("唤醒词=官方指令名且被唤醒时不重复回复", len(got) == 0, f"got={got}")
+
+    event = FakeEvent("sam's menu 水果", at_or_wake=True)
+    got = [item async for item in plugin.on_message(event)]
+    check("唤醒词=sam's 且被唤醒时交给官方指令", len(got) == 0, f"got={got}")
+
+    # 群聊里没 @bot 也没 / 前缀：官方指令不触发，唤醒词仍要能回
+    event = FakeEvent("sam's menu 水果", at_or_wake=False)
+    got = [item async for item in plugin.on_message(event)]
+    check("未被唤醒时唤醒词入口照常可用", len(got) > 0, f"got={got}")
 
     _, out = await run_subcommand(plugin, "sam_add", "sam add 水果 车厘子 车厘子 89.9 1.5 5",
                                  sender_id="admin1", admin=True)
@@ -640,7 +668,7 @@ async def test_official_commands():
 
     _, out = await run_subcommand(plugin, "sam_help", "sam help")
     t = texts(out)
-    check("官方 help 提到两种用法", "官方指令方式：/sam" in t, t)
+    check("官方 help 提到主指令与别名", "/山姆、/sam's、/sam" in t, t)
     check("官方 help 保留唤醒词说明", "sam's help" in t, t)
 
     _, out = await run_subcommand(plugin, "sam_pay", "sam pay")

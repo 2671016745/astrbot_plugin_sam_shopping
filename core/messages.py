@@ -4,6 +4,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from .config import CHANNEL_LABELS, AppConfig
+from .constants import COMMAND_GROUP_ALIASES, COMMAND_GROUP_NAME
 from .models import ORDER_PENDING, CartItem, Order, OrderItem, Product
 
 
@@ -21,7 +22,8 @@ def format_help(config: AppConfig, has_products: bool) -> str:
         "",
         "两种用法：",
         f"· 唤醒词方式：{wake} <子指令>（唤醒词可在配置中修改）",
-        "· 官方指令方式：/sam <子指令>（可在 AstrBot「指令」页改名 / 加别名 / 禁用）",
+        f"· 官方指令方式：/{COMMAND_GROUP_NAME}、{'、'.join('/' + a for a in COMMAND_GROUP_ALIASES)} "
+        "<子指令>（可在 AstrBot「指令」页改名 / 加别名 / 禁用）",
         "",
         f"{wake} help —— 显示本帮助",
         f"{wake} menu [大分类] [小分类] —— 浏览商品分类与商品",

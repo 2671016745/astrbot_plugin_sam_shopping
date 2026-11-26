@@ -35,8 +35,9 @@ def command(*args, **kwargs):
 class RegisteringCommandable:
     """模拟 astrbot 的指令组返回对象，支持级联注册子指令。"""
 
-    def __init__(self, name):
+    def __init__(self, name, alias=None):
         self.name = name
+        self.alias = set(alias or ())
         self.sub_commands = []
 
     def command(self, *args, **kwargs):
@@ -58,7 +59,7 @@ class RegisteringCommandable:
 
 def command_group(*args, **kwargs):
     def decorator(func):
-        return RegisteringCommandable(args[0] if args else None)
+        return RegisteringCommandable(args[0] if args else None, kwargs.get("alias"))
 
     return decorator
 
