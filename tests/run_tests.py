@@ -668,8 +668,15 @@ async def test_official_commands():
 
     _, out = await run_subcommand(plugin, "sam_help", "sam help")
     t = texts(out)
-    check("官方 help 提到主指令与别名", "/山姆、/sam's、/sam" in t, t)
-    check("官方 help 保留唤醒词说明", "sam's help" in t, t)
+    check("官方 help 有菜单指令", "menu [大分类] [小分类]" in t, t)
+    check("普通用户 help 不含 add", "add " not in t, t)
+    check("普通用户 help 无「两种用法」说明", "两种用法" not in t, t)
+
+    _, out = await run_subcommand(
+        plugin, "sam_help", "sam help", sender_id="admin1", admin=True
+    )
+    t = texts(out)
+    check("管理员 help 含 add", "add <大分类>" in t, t)
 
     _, out = await run_subcommand(plugin, "sam_pay", "sam pay")
     check("官方 pay 出预览", "订单预览" in texts(out), texts(out))
@@ -678,6 +685,29 @@ async def test_official_commands():
     _, out = await run_subcommand(plugin, "sam_add", "sam add 水果 车厘子 草莓 10",
                                   sender_id="u2", admin=False)
     check("官方 add 权限校验", "仅管理员可用" in texts(out), texts(out))
+
+
+def test_admin_permission_filter():
+    """``add`` 的权限过滤器：类型显示为 admin，实际按插件配置的名单判断。"""
+    permission = _core("permission")
+
+    plugin = make_plugin({"general": {"admins": ["admin1"]}}, "perm")
+
+    class _Ev:
+        def __init__(self, uid):
+            self._uid = uid
+
+        def get_sender_id(self):
+            return self._uid
+
+        def is_admin(self):
+            return False
+
+    f = permission.ConfigAdminFilter(plugin._is_admin)
+    eq("权限类型为 admin", getattr(f.permission_type, "name", ""), "ADMIN")
+    check("配置的管理员放行", f.filter(_Ev("admin1"), None))
+    check("普通用户拒绝", not f.filter(_Ev("u2"), None))
+    check("校验异常时拒绝", not f.filter(object(), None))
 
 
 async def main():
@@ -690,6 +720,7 @@ async def main():
     await test_proxy_fee_commands()
     await test_official_commands()
     test_config()
+    test_admin_permission_filter()
 
     failed = [item for item in RESULTS if not item[1]]
     print()

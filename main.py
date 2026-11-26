@@ -31,7 +31,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools
 
-from .core import messages
+from .core import messages, permission
 from .core.config import AppConfig, ConfigError
 from .core.mailer import Mailer
 from .core.models import ORDER_PAID, ORDER_PENDING
@@ -102,6 +102,9 @@ class SamShoppingPlugin(Star):
         self.service = SamService(self.repo, self.config)
         self.payment = YiPayClient(self.config.payment)
         self.mailer = Mailer(self.config.smtp)
+
+        # 让 /山姆 add 在指令管理里显示为「仅管理员」，并按本插件配置的名单判断
+        permission.install_admin_permission(self._is_admin)
 
         self._pending: dict[str, dict] = {}
         self._poll_task: asyncio.Task | None = None
@@ -288,11 +291,24 @@ class SamShoppingPlugin(Star):
     def _pop_pending(self, user_id: str) -> None:
         self._pending.pop(user_id, None)
 
+    def _is_admin(self, event: AstrMessageEvent) -> bool:
+        """是否为本插件的管理员：先看配置的 ID 列表，再可选回退平台管理员。"""
+        user_id = str(event.get_sender_id() or "")
+        try:
+            platform_admin = bool(event.is_admin())
+        except Exception:  # noqa: BLE001
+            platform_admin = False
+        return self.config.is_admin(user_id, platform_admin)
+
     # ------------------------------------------------------------------
     # 指令实现
     # ------------------------------------------------------------------
     async def _cmd_help(self, args, event: AstrMessageEvent):
-        yield event.plain_result(messages.format_help(self.config, self._has_products()))
+        """帮助：普通用户看不到 add 指令。"""
+        is_admin = self._is_admin(event)
+        yield event.plain_result(
+            messages.format_help(self.config, self._has_products(), is_admin=is_admin)
+        )
 
     async def _cmd_menu(self, args, event: AstrMessageEvent):
         if not args:
@@ -482,12 +498,7 @@ class SamShoppingPlugin(Star):
         yield event.plain_result(f"已删除。\n\n{messages.format_cart(items)}")
 
     async def _cmd_add(self, args, event: AstrMessageEvent):
-        user_id = str(event.get_sender_id() or "")
-        try:
-            platform_admin = bool(event.is_admin())
-        except Exception:  # noqa: BLE001
-            platform_admin = False
-        if not self.config.is_admin(user_id, platform_admin):
+        if not self._is_admin(event):
             yield event.plain_result("该指令仅管理员可用。")
             return
         if len(args) < 4:

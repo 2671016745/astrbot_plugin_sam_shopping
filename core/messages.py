@@ -4,7 +4,6 @@ from __future__ import annotations
 from decimal import Decimal
 
 from .config import CHANNEL_LABELS, AppConfig
-from .constants import COMMAND_GROUP_ALIASES, COMMAND_GROUP_NAME
 from .models import ORDER_PENDING, CartItem, Order, OrderItem, Product
 
 
@@ -15,83 +14,80 @@ def _money(value) -> str:
         return str(value)
 
 
-def format_help(config: AppConfig, has_products: bool) -> str:
+def format_help(config: AppConfig, has_products: bool, is_admin: bool = False) -> str:
+    """帮助文案。``add`` 只对管理员展示。"""
     wake = config.wake_word
-    lines = [
-        f"【{config.shop_name}】指令帮助",
-        "",
-        "两种用法：",
-        f"· 唤醒词方式：{wake} <子指令>（唤醒词可在配置中修改）",
-        f"· 官方指令方式：/{COMMAND_GROUP_NAME}、{'、'.join('/' + a for a in COMMAND_GROUP_ALIASES)} "
-        "<子指令>（可在 AstrBot「指令」页改名 / 加别名 / 禁用）",
-        "",
-        f"{wake} help —— 显示本帮助",
-        f"{wake} menu [大分类] [小分类] —— 浏览商品分类与商品",
-        f"{wake} buy <商品名称> <数量> —— 加入购物车（数量省略时为 1）",
-        f"{wake} basket —— 查看购物车",
-        f"{wake} basket delete [序号] —— 删除购物车中的商品",
-        f"{wake} basket clear —— 清空购物车（需二次确认）",
-        f"{wake} pay [极速达|全国配] —— 查看费用明细并下单，随后回复「确认支付」",
-        f"{wake} add <大分类> <小分类> <商品名称> <价格> [重量kg] [代购费元/件] —— 管理员添加商品",
-        "",
-        "配送方式与运费规则：",
+    commands = [
+        (f"{wake} menu [大分类] [小分类]", "浏览商品分类与商品"),
+        (f"{wake} buy <商品名称> [数量]", "加入购物车（数量省略时为 1）"),
+        (f"{wake} basket", "查看购物车"),
+        (f"{wake} basket delete [序号]", "删除购物车中的商品"),
+        (f"{wake} basket clear", "清空购物车（需二次确认）"),
+        (f"{wake} pay [极速达|全国配]", "查看费用明细，随后回复「确认支付」下单"),
     ]
+    if is_admin:
+        commands.append(
+            (
+                f"{wake} add <大分类> <小分类> <商品名称> <价格> "
+                "[重量kg] [代购费元/件]",
+                "管理员添加商品",
+            )
+        )
+
+    lines = [f"【{config.shop_name}】指令帮助", ""]
+    lines.extend(f"· {cmd} —— {desc}" for cmd, desc in commands)
+    lines.append("")
+
+    lines.append("运费规则（满减按%s计算，结果保留两位小数）：" % _amount_base_text(config))
     channels = config.enabled_channels()
     if not channels:
-        lines.append("（未启用任何配送方式，请联系管理员）")
+        lines.append("· 未启用任何配送方式，请联系管理员")
     for channel in channels:
         rule = config.rule_for(channel)
         label = CHANNEL_LABELS.get(channel, channel)
-        lines.append(f"· {label}：")
-        lines.append(
-            f"  - 满 { _money(rule.free_amount) } 元免 { _money(rule.free_weight) }kg 以内运费；"
-            f"未满则收 { _money(rule.base_fee) } 元"
-        )
-        lines.append(
-            f"  - 超过免费重量部分加收 { _money(rule.overweight_rate) } 元/kg"
-        )
+        parts = [
+            f"满 {_money(rule.free_amount)} 元免 {_money(rule.free_weight)}kg 以内运费，"
+            f"未满收 {_money(rule.base_fee)} 元",
+            f"超出免费重量部分加 {_money(rule.overweight_rate)} 元/kg",
+        ]
         if rule.per_100_discount > 0:
-            lines.append(
-                f"  - 每满 100 元减免 { _money(rule.per_100_discount) } 元运费"
-            )
+            parts.append(f"每满 100 元减 {_money(rule.per_100_discount)} 元")
         if rule.per_100_free_weight > 0:
-            lines.append(
-                f"  - 每满 100 元再增加 { _money(rule.per_100_free_weight) }kg 免费重量"
-            )
-        lines.append("  - 运费最低不低于 0 元")
+            parts.append(f"每满 100 元增加 {_money(rule.per_100_free_weight)}kg 免重")
+        parts.append("最低 0 元")
+        lines.append(f"· {label}：{'；'.join(parts)}。")
+
     lines.append("")
-    lines.append(
-        f"满减基数：{_amount_base_text(config)}；金额单位元，重量单位 kg，结果保留两位小数。"
-    )
-    lines.extend(["", "代购费规则："])
     fee = config.proxy_fee
     label = config.fee_label or "代购费"
     if fee.fee_mode == "none":
-        lines.append(f"· 当前不收取{label}。")
+        lines.append(f"代购费：当前不收取。")
     else:
         mode_names = {"per_order": "按次", "per_weight": "按重量", "per_item": "按件数"}
-        lines.append(f"· {label}计费方式：{mode_names.get(fee.fee_mode, fee.fee_mode)}。")
         if fee.fee_mode == "per_order":
-            lines.append(f"  - 每单固定收取 { _money(fee.fee_per_order) } 元，与商品数量、重量无关。")
+            detail = f"每单固定 {_money(fee.fee_per_order)} 元"
         elif fee.fee_mode == "per_weight":
-            lines.append(
-                f"  - 按购物车总重量计费：{ _money(fee.fee_per_weight) } 元/kg × 总重量。"
-            )
+            detail = f"{_money(fee.fee_per_weight)} 元/kg × 总重量"
         else:
-            lines.append(
-                f"  - 按购物车总件数计费：{ _money(fee.fee_per_item) } 元/件 × 总件数。"
-            )
-        lines.append(
-            "  - 单个商品可在添加时单独指定代购费（元/件），"
-            "设置后该商品按“数量 × 单件代购费”计算，优先于上面的全局规则。"
-        )
+            detail = f"{_money(fee.fee_per_item)} 元/件 × 总件数"
+        extra = []
         if fee.fee_min > 0:
-            lines.append(f"  - 每单{label}最低 { _money(fee.fee_min) } 元。")
+            extra.append(f"最低 {_money(fee.fee_min)} 元")
         if fee.fee_max > 0:
-            lines.append(f"  - 每单{label}最高 { _money(fee.fee_max) } 元。")
+            extra.append(f"最高 {_money(fee.fee_max)} 元")
+        suffix = f"（{'，'.join(extra)}）" if extra else ""
+        lines.append(
+            f"{label}：{mode_names.get(fee.fee_mode, fee.fee_mode)}，{detail}{suffix}；"
+            "单个商品可单独设置元/件，优先于全局规则。"
+        )
+
     if not has_products:
         lines.append("")
-        lines.append("当前还没有商品，管理员可用上面的 add 指令添加。")
+        lines.append(
+            "当前还没有商品，可用 add 添加。"
+            if is_admin
+            else "当前还没有商品，请联系管理员添加。"
+        )
     return "\n".join(lines)
 
 
