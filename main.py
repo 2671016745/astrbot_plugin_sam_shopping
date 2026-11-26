@@ -1,15 +1,26 @@
 """山姆代购 AstrBot 插件入口。
 
-指令以可配置唤醒词开头，例如默认唤醒词 ``sam's``：
+两种指令入口，行为完全一致：
 
-    sam's help
-    sam's menu 水果 车厘子
-    sam's buy 牛奶 2
-    sam's basket
-    sam's basket delete 1
-    sam's basket clear
-    sam's pay 极速达
-    sam's add 水果 车厘子 智利车厘子 89.9 1.5
+1. 可配置唤醒词（默认 ``sam's``）：
+
+       sam's help
+       sam's menu 水果 车厘子
+       sam's buy 牛奶 2
+       sam's basket
+       sam's basket delete 1
+       sam's basket clear
+       sam's pay 极速达
+       sam's add 水果 车厘子 智利车厘子 89.9 1.5
+
+2. 官方指令组 ``sam``（出现在 AstrBot WebUI 的「指令」页，可改名 / 加别名 / 禁用）：
+
+       /sam help
+       /sam menu 水果 车厘子
+       /sam buy 牛奶 2
+       /sam basket delete 1
+       /sam pay 极速达
+       /sam add 水果 车厘子 智利车厘子 89.9 1.5 5
 """
 from __future__ import annotations
 
@@ -67,6 +78,10 @@ BARE_CANCEL = {"取消", "cancel", "no", "n", "算了"}
 CHANNEL_WORDS = {"express", "national", "极速达", "全国配"}
 # add 指令里用来占位「重量」的写法（表示使用默认重量）
 WEIGHT_PLACEHOLDERS = {"-", "—", "–", "/", "\\", "无", "none", "null", "skip", "默认"}
+
+# 官方指令（会出现在 AstrBot WebUI 的指令管理里，可改名/加别名/禁用）
+COMMAND_GROUP_NAME = "sam"
+COMMAND_SUB_NAMES = ("help", "menu", "buy", "basket", "pay", "add")
 
 
 class SamShoppingPlugin(Star):
@@ -169,6 +184,9 @@ class SamShoppingPlugin(Star):
             return
         if not text:
             return
+        # 官方指令（/sam xxx）由 command handler 处理，这里不重复响应
+        if self._is_official_command(text):
+            return
         parsed = self._parse(text)
         if parsed is None:
             return
@@ -180,6 +198,66 @@ class SamShoppingPlugin(Star):
         except Exception as exc:  # noqa: BLE001
             logger.exception("山姆代购指令处理异常")
             yield event.plain_result(f"指令处理出错：{exc}")
+
+    @staticmethod
+    def _is_official_command(text: str) -> bool:
+        """判断是否是官方指令组 ``sam ...``（避免唤醒词与官方指令重复响应）。"""
+        tokens = re.sub(r"\s+", " ", text.strip()).split(" ")
+        if not tokens or tokens[0].lower() != COMMAND_GROUP_NAME:
+            return False
+        if len(tokens) == 1:
+            return True
+        return tokens[1].lower() in COMMAND_SUB_NAMES
+
+    @staticmethod
+    def _command_args(event: AstrMessageEvent, depth: int = 2) -> list[str]:
+        """取出官方指令 ``sam <sub> ...`` 中 ``...`` 部分的参数。"""
+        text = re.sub(r"\s+", " ", str(event.get_message_str() or "").strip())
+        tokens = [token for token in text.split(" ") if token]
+        return tokens[depth:]
+
+    # ------------------------------------------------------------------
+    # 官方指令（WebUI「指令」页可见，可改名 / 加别名 / 禁用）
+    # ------------------------------------------------------------------
+    @filter.command_group(COMMAND_GROUP_NAME)
+    async def sam(self, event: AstrMessageEvent) -> None:
+        """山姆代购：menu / buy / basket / pay / add / help"""
+
+    @sam.command("help")
+    async def sam_help(self, event: AstrMessageEvent):
+        """查看指令帮助、配送方式与运费规则"""
+        async for item in self._cmd_help(self._command_args(event), event):
+            yield item
+
+    @sam.command("menu")
+    async def sam_menu(self, event: AstrMessageEvent):
+        """浏览商品分类与商品"""
+        async for item in self._cmd_menu(self._command_args(event), event):
+            yield item
+
+    @sam.command("buy")
+    async def sam_buy(self, event: AstrMessageEvent):
+        """把商品加入购物车"""
+        async for item in self._cmd_buy(self._command_args(event), event):
+            yield item
+
+    @sam.command("basket")
+    async def sam_basket(self, event: AstrMessageEvent):
+        """查看 / 删除 / 清空购物车"""
+        async for item in self._cmd_basket(self._command_args(event), event):
+            yield item
+
+    @sam.command("pay")
+    async def sam_pay(self, event: AstrMessageEvent):
+        """确认购物车并生成收款二维码"""
+        async for item in self._cmd_pay(self._command_args(event), event):
+            yield item
+
+    @sam.command("add")
+    async def sam_add(self, event: AstrMessageEvent):
+        """管理员添加商品"""
+        async for item in self._cmd_add(self._command_args(event), event):
+            yield item
 
     async def _dispatch(self, parsed, event: AstrMessageEvent):
         sub, args, _raw = parsed

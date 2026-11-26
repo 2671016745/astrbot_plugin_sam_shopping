@@ -594,6 +594,64 @@ def test_config():
     eq("唤醒词后无空格不匹配", plugin._parse("山姆menu"), None)
 
 
+async def run_subcommand(plugin, handler_name, text, **kwargs):
+    """直接调用官方指令子命令 handler（模拟 command filter 匹配后的执行）。"""
+    event = FakeEvent(text, **kwargs)
+    out = []
+    async for item in getattr(plugin, handler_name)(event):
+        out.append(item)
+    return event, out
+
+
+async def test_official_commands():
+    plugin = make_plugin(
+        {"general": {"wake_word": "sam's", "admins": ["admin1"]}}, "official"
+    )
+
+    check("识别官方指令 sam menu", plugin._is_official_command("sam menu 水果"))
+    check("识别官方指令组本身", plugin._is_official_command("sam"))
+    check("大小写不敏感", plugin._is_official_command("SAM pay"))
+    check("唤醒词写法不算官方指令", not plugin._is_official_command("sam's menu"))
+    check("无关消息不算官方指令", not plugin._is_official_command("今天天气怎么样"))
+
+    eq(
+        "官方指令参数解析",
+        plugin._command_args(FakeEvent("sam buy 牛奶 2")),
+        ["牛奶", "2"],
+    )
+    eq("官方指令无参数", plugin._command_args(FakeEvent("sam menu")), [])
+
+    event = FakeEvent("sam menu 水果")
+    got = [item async for item in plugin.on_message(event)]
+    check("on_message 不重复响应官方指令", len(got) == 0, f"got={got}")
+
+    _, out = await run_subcommand(plugin, "sam_add", "sam add 水果 车厘子 车厘子 89.9 1.5 5",
+                                 sender_id="admin1", admin=True)
+    t = texts(out)
+    check("官方 add 成功", "已添加商品：车厘子" in t, t)
+    check("官方 add 带代购费", "5 元/件" in t, t)
+
+    _, out = await run_subcommand(plugin, "sam_menu", "sam menu 水果 车厘子")
+    t = texts(out)
+    check("官方 menu 有商品", "车厘子" in t and "89.90" in t, t)
+
+    _, out = await run_subcommand(plugin, "sam_buy", "sam buy 车厘子 2")
+    check("官方 buy 成功", "已加入购物车" in texts(out), texts(out))
+
+    _, out = await run_subcommand(plugin, "sam_help", "sam help")
+    t = texts(out)
+    check("官方 help 提到两种用法", "官方指令方式：/sam" in t, t)
+    check("官方 help 保留唤醒词说明", "sam's help" in t, t)
+
+    _, out = await run_subcommand(plugin, "sam_pay", "sam pay")
+    check("官方 pay 出预览", "订单预览" in texts(out), texts(out))
+
+    # 非管理员走官方 add 应被拒绝
+    _, out = await run_subcommand(plugin, "sam_add", "sam add 水果 车厘子 草莓 10",
+                                  sender_id="u2", admin=False)
+    check("官方 add 权限校验", "仅管理员可用" in texts(out), texts(out))
+
+
 async def main():
     test_freight()
     test_service()
@@ -602,6 +660,7 @@ async def main():
     await test_commands()
     await test_payment_failure()
     await test_proxy_fee_commands()
+    await test_official_commands()
     test_config()
 
     failed = [item for item in RESULTS if not item[1]]
