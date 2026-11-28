@@ -131,8 +131,16 @@
         "type": "bool",
         "default": false
       },
-      "notify_url": { "description": "异步回调地址（可选）", "type": "string", "default": "" },
-      "return_url": { "description": "同步回跳地址（可选）", "type": "string", "default": "" },
+      "notify_url": {
+        "description": "异步回调地址（可选，留空即可）。本插件靠主动轮询查询支付状态，不依赖网关回调；若填写，需在易支付后台把该域名加入回调白名单",
+        "type": "string",
+        "default": ""
+      },
+      "return_url": {
+        "description": "同步回跳地址（可选，留空则支付完停留在网关页面）",
+        "type": "string",
+        "default": ""
+      },
       "paid_status_values": {
         "description": "查询结果中判定“已支付”的 status 取值",
         "type": "list",
