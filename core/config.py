@@ -21,6 +21,55 @@ CHANNEL_LABELS = {
 AMOUNT_BASE_GOODS = "goods"
 AMOUNT_BASE_TOTAL = "total"
 
+# WebUI 下拉框只能用纯字符串数组（AstrBot schema 不支持 {label, value}，否则前端渲染成 [object Object]）。
+# 所以选项直接写成中文标签，代码里再映射回内部取值；旧配置里的英文值继续兼容。
+CHANNEL_ALIASES = {
+    CHANNEL_EXPRESS: CHANNEL_EXPRESS,
+    "极速达": CHANNEL_EXPRESS,
+    CHANNEL_NATIONAL: CHANNEL_NATIONAL,
+    "全国配": CHANNEL_NATIONAL,
+}
+AMOUNT_BASE_ALIASES = {
+    AMOUNT_BASE_GOODS: AMOUNT_BASE_GOODS,
+    "商品总金额": AMOUNT_BASE_GOODS,
+    "商品金额": AMOUNT_BASE_GOODS,
+    AMOUNT_BASE_TOTAL: AMOUNT_BASE_TOTAL,
+    "含运费金额": AMOUNT_BASE_TOTAL,
+}
+FEE_MODE_ALIASES = {
+    "none": "none",
+    "不收取": "none",
+    "per_order": "per_order",
+    "按次": "per_order",
+    "per_weight": "per_weight",
+    "按重量": "per_weight",
+    "per_item": "per_item",
+    "按件数": "per_item",
+}
+QUERY_AUTH_ALIASES = {
+    "key": "key",
+    "key（多数易支付网关）": "key",
+    "sign": "sign",
+    "sign 签名": "sign",
+}
+
+
+def _alias(value: Any, table: Mapping[str, str], default: str) -> str:
+    """把中文标签或英文取值统一成内部取值。
+
+    认不出来的值原样返回（而不是回退默认），这样非法配置会被后续校验拦下来报错。
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return default
+    text = str(value).strip()
+    if text in table:
+        return table[text]
+    lowered = text.lower()
+    for key, mapped in table.items():
+        if key.lower() == lowered:
+            return mapped
+    return text
+
 
 class ConfigError(Exception):
     """配置不合法。"""
@@ -154,7 +203,7 @@ class ProxyFeeConfig:
         data = data or {}
         d = defaults or cls()
         return cls(
-            fee_mode=_str(data.get("fee_mode"), d.fee_mode),
+            fee_mode=_alias(data.get("fee_mode"), FEE_MODE_ALIASES, d.fee_mode),
             fee_per_order=_float(data.get("fee_per_order"), d.fee_per_order),
             fee_per_weight=_float(data.get("fee_per_weight"), d.fee_per_weight),
             fee_per_item=_float(data.get("fee_per_item"), d.fee_per_item),
@@ -285,8 +334,12 @@ class AppConfig:
         proxy_fee = _section(raw, "fee")
 
         wake_word = _str(general.get("wake_word"), "sam's")
-        default_channel = _str(general.get("default_channel"), CHANNEL_EXPRESS).lower()
-        amount_base = _str(freight.get("amount_base"), AMOUNT_BASE_GOODS).lower()
+        default_channel = _alias(
+            general.get("default_channel"), CHANNEL_ALIASES, CHANNEL_EXPRESS
+        )
+        amount_base = _alias(
+            freight.get("amount_base"), AMOUNT_BASE_ALIASES, AMOUNT_BASE_GOODS
+        )
         enable_express = _bool(general.get("enable_express"), True)
         enable_national = _bool(general.get("enable_national"), True)
 
@@ -322,7 +375,9 @@ class AppConfig:
                 create_path=_str(payment.get("create_path"), "/mapi.php"),
                 query_path=_str(payment.get("query_path"), "/api.php"),
                 query_act=_str(payment.get("query_act"), "order"),
-                query_auth=_str(payment.get("query_auth"), "key").lower(),
+                query_auth=_alias(
+                    payment.get("query_auth"), QUERY_AUTH_ALIASES, "key"
+                ),
                 notify_url=_str(payment.get("notify_url"), ""),
                 return_url=_str(payment.get("return_url"), ""),
                 sign_urlencode=_bool(payment.get("sign_urlencode"), False),

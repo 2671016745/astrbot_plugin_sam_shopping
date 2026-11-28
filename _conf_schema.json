@@ -29,11 +29,8 @@
       "default_channel": {
         "description": "默认配送方式",
         "type": "string",
-        "default": "express",
-        "options": [
-          { "label": "极速达", "value": "express" },
-          { "label": "全国配", "value": "national" }
-        ]
+        "default": "极速达",
+        "options": ["极速达", "全国配"]
       },
       "enable_express": {
         "description": "启用「极速达」配送方式",
@@ -59,11 +56,8 @@
       "amount_base": {
         "description": "满减计算基数",
         "type": "string",
-        "default": "goods",
-        "options": [
-          { "label": "商品总金额（推荐）", "value": "goods" },
-          { "label": "含运费金额", "value": "total" }
-        ]
+        "default": "商品总金额",
+        "options": ["商品总金额", "含运费金额"]
       },
       "default_weight_kg": {
         "description": "商品未填写重量时的默认重量（kg）",
@@ -101,10 +95,10 @@
     "type": "object",
     "items": {
       "fee_mode": {
-        "description": "计费方式：none 不收 / per_order 按次 / per_weight 按重量 / per_item 按件数",
+        "description": "计费方式：不收取 / 按次 / 按重量 / 按件数",
         "type": "string",
-        "default": "none",
-        "options": ["none", "per_order", "per_weight", "per_item"]
+        "default": "不收取",
+        "options": ["不收取", "按次", "按重量", "按件数"]
       },
       "fee_per_order": { "description": "按次：每单固定代购费（元）", "type": "float", "default": 0.0 },
       "fee_per_weight": { "description": "按重量：每 kg 代购费（元/kg）", "type": "float", "default": 0.0 },
@@ -122,18 +116,15 @@
       "pid": { "description": "商户 ID", "type": "string", "default": "" },
       "key": { "description": "商户密钥（不会输出到聊天或日志）", "type": "string", "secret": true, "default": "" },
       "pay_type": { "description": "支付方式代码，如 wxpay / alipay", "type": "string", "default": "wxpay" },
-      "sign_type": { "description": "签名方式", "type": "string", "default": "MD5", "options": [ { "label": "MD5", "value": "MD5" } ] },
+      "sign_type": { "description": "签名方式（当前仅支持 MD5）", "type": "string", "default": "MD5", "options": ["MD5"] },
       "create_path": { "description": "创建收款接口路径", "type": "string", "default": "/mapi.php" },
       "query_path": { "description": "订单查询接口路径", "type": "string", "default": "/api.php" },
       "query_act": { "description": "订单查询接口 act 参数", "type": "string", "default": "order" },
       "query_auth": {
         "description": "订单查询接口鉴权方式",
         "type": "string",
-        "default": "key",
-        "options": [
-          { "label": "key（多数易支付网关）", "value": "key" },
-          { "label": "sign 签名", "value": "sign" }
-        ]
+        "default": "key（多数易支付网关）",
+        "options": ["key（多数易支付网关）", "sign 签名"]
       },
       "sign_urlencode": {
         "description": "计算签名时是否对参数做 URL 编码（多数网关不编码）",

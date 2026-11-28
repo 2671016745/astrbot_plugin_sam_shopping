@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import os
 import shutil
 import sys
@@ -592,6 +593,63 @@ def test_config():
         check("非法配送方式应报错", False)
     except Exception:  # noqa: BLE001
         check("非法配送方式应报错", True)
+
+    # WebUI 下拉框改成中文标签后，配置里会出现中文取值；旧英文取值也要继续可用
+    eq(
+        "中文默认配送方式",
+        AppConfig.from_dict({"general": {"default_channel": "全国配"}}).default_channel,
+        "national",
+    )
+    eq(
+        "英文默认配送方式仍兼容",
+        AppConfig.from_dict({"general": {"default_channel": "express"}}).default_channel,
+        "express",
+    )
+    eq(
+        "中文满减基数",
+        AppConfig.from_dict({"freight": {"amount_base": "含运费金额"}}).freight_amount_base,
+        "total",
+    )
+    eq(
+        "中文代购费模式",
+        AppConfig.from_dict(
+            {"fee": {"fee_mode": "按件数", "fee_per_item": 2}}
+        ).proxy_fee.fee_mode,
+        "per_item",
+    )
+    eq(
+        "英文代购费模式仍兼容",
+        AppConfig.from_dict(
+            {"fee": {"fee_mode": "per_weight", "fee_per_weight": 1}}
+        ).proxy_fee.fee_mode,
+        "per_weight",
+    )
+    eq(
+        "中文查询鉴权",
+        AppConfig.from_dict({"payment": {"query_auth": "sign 签名"}}).payment.query_auth,
+        "sign",
+    )
+
+    schema = json.loads(
+        (Path(__file__).resolve().parent.parent / "_conf_schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    for section, body in schema.items():
+        for field, spec in (body.get("items") or {}).items():
+            options = spec.get("options")
+            if not options:
+                continue
+            check(
+                f"schema {section}.{field} options 为纯字符串",
+                all(isinstance(o, str) for o in options),
+                repr(options),
+            )
+            check(
+                f"schema {section}.{field} default 在选项内",
+                spec.get("default") in options,
+                f"default={spec.get('default')!r}",
+            )
 
     plugin = make_plugin({"general": {"wake_word": "山姆", "admins": []}}, "parse")
     eq("解析唤醒词", plugin._parse("山姆 menu")[0], "menu")
