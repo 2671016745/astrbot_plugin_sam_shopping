@@ -79,7 +79,9 @@ from .core.constants import (
     COMMAND_GROUP_NAME,
     COMMAND_GROUP_NAMES,
     COMMAND_SUB_NAMES,
+    PAY_TYPE_LABELS,
     WEIGHT_PLACEHOLDERS,
+    parse_pay_type,
 )
 
 
@@ -398,8 +400,23 @@ class SamShoppingPlugin(Star):
             channel = args[0]
             args = args[1:]
 
+        pay_type = None
+        if args:
+            method = parse_pay_type(args[0])
+            if method:
+                pay_type = method
+                args = args[1:]
+
         if args and args[0].lower() in {"confirm", "确认", "确定"}:
-            async for item in self._do_pay(event, {"type": "pay", "channel": channel, "ts": time.time()}):
+            async for item in self._do_pay(
+                event,
+                {
+                    "type": "pay",
+                    "channel": channel,
+                    "pay_type": pay_type,
+                    "ts": time.time(),
+                },
+            ):
                 yield item
             return
 
@@ -407,12 +424,20 @@ class SamShoppingPlugin(Star):
         if not items:
             yield event.plain_result("购物车是空的，无法下单。发送「menu」浏览商品。")
             return
+        if args:
+            yield event.plain_result(
+                "无法识别的参数：" + " ".join(args) + "\n"
+                "用法：pay [极速达|全国配] [支付方式]（可选）"
+            )
+            return
 
         order = self.service.preview_order(user_id, user_name, channel)
         freight, proxy = self.service.preview_fees(user_id, channel)
-        self._set_pending(user_id, "pay", {"channel": channel})
+        self._set_pending(user_id, "pay", {"channel": channel, "pay_type": pay_type})
+        tip = messages.format_pay_method_tip(pay_type or self.config.payment.pay_type)
         yield event.plain_result(
             messages.format_order_preview(order, messages.format_fee_lines(freight, proxy))
+            + tip
         )
 
     async def _do_pay(self, event: AstrMessageEvent, pending: dict):
@@ -420,6 +445,7 @@ class SamShoppingPlugin(Star):
         user_name = str(event.get_sender_name() or "") or user_id
         umo = event.unified_msg_origin
         channel = pending.get("channel")
+        pay_type = pending.get("pay_type") or self.config.payment.pay_type
 
         try:
             order = self.service.build_order(user_id, user_name, channel, umo=umo)
@@ -428,7 +454,9 @@ class SamShoppingPlugin(Star):
             yield event.plain_result(str(exc))
             return
 
-        result = await self.payment.create_payment(order, self.config.shop_name)
+        result = await self.payment.create_payment(
+            order, self.config.shop_name, pay_type=pay_type
+        )
         if not result.ok:
             self.service.cancel_order(order.order_id, "生成收款码失败")
             self._pop_pending(user_id)

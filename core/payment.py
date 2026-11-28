@@ -11,7 +11,8 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping
 
-from .config import PaymentConfig
+from .config import PAY_TYPE_AUTO, PaymentConfig
+from .constants import parse_pay_type
 from .models import Order
 
 HttpGetter = Callable[[str, float], Awaitable[Mapping[str, Any]]]
@@ -101,11 +102,16 @@ class YiPayClient:
     # ------------------------------------------------------------------
     # 创建收款
     # ------------------------------------------------------------------
-    def _create_params(self, order: Order, shop_name: str) -> dict:
+    def _create_params(
+        self, order: Order, shop_name: str, pay_type: str | None = None
+    ) -> dict:
         name = f"{shop_name}-{order.order_id}"[:64]
+        method = str(pay_type or self.cfg.pay_type or PAY_TYPE_AUTO).strip()
+        parsed = parse_pay_type(method)
+        if parsed:
+            method = parsed
         params = {
             "pid": self.cfg.pid,
-            "type": self.cfg.pay_type,
             "out_trade_no": order.order_id,
             "money": f"{order.total:.2f}",
             "name": name,
@@ -113,14 +119,20 @@ class YiPayClient:
             "return_url": self.cfg.return_url,
             "param": f"sam|{order.order_id}",
         }
+        # auto（不限）时不传 type：网关会跳转收银台，让买家自选支付方式。
+        if method and method != PAY_TYPE_AUTO:
+            params["type"] = method
         return {k: v for k, v in params.items() if v not in (None, "")}
 
     async def create_payment(
-        self, order: Order, shop_name: str = "山姆代购"
+        self,
+        order: Order,
+        shop_name: str = "山姆代购",
+        pay_type: str | None = None,
     ) -> CreatePaymentResult:
         if not self.cfg.configured:
             return CreatePaymentResult(ok=False, message="未配置易支付网关（gateway/pid/key）")
-        params = self._create_params(order, shop_name)
+        params = self._create_params(order, shop_name, pay_type)
         params["sign"] = self._sign(params)
         params["sign_type"] = self.cfg.sign_type
         url = self._build_url(self.cfg.create_url(), params)

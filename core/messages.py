@@ -4,6 +4,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from .config import CHANNEL_LABELS, AppConfig
+from .constants import PAY_TYPE_AUTO, PAY_TYPE_LABELS
 from .models import ORDER_PENDING, CartItem, Order, OrderItem, Product
 
 
@@ -12,6 +13,14 @@ def _money(value) -> str:
         return f"{Decimal(str(value)):.2f}"
     except Exception:  # noqa: BLE001
         return str(value)
+
+
+def format_pay_method_tip(pay_type: str) -> str:
+    """下单前提示本次使用的支付方式。"""
+    label = PAY_TYPE_LABELS.get(pay_type, pay_type)
+    if pay_type == PAY_TYPE_AUTO:
+        return "\n\n支付方式：不限 —— 进入网关收银台后可自选支付宝 / 微信 / QQ钱包。"
+    return f"\n\n支付方式：{label}。"
 
 
 def format_help(config: AppConfig, has_products: bool, is_admin: bool = False) -> str:
@@ -23,7 +32,7 @@ def format_help(config: AppConfig, has_products: bool, is_admin: bool = False) -
         (f"{wake} basket", "查看购物车"),
         (f"{wake} basket delete [序号]", "删除购物车中的商品"),
         (f"{wake} basket clear", "清空购物车（需二次确认）"),
-        (f"{wake} pay [极速达|全国配]", "查看费用明细，随后回复「确认支付」下单"),
+        (f"{wake} pay [极速达|全国配] [支付方式]", "查看费用明细，随后回复「确认支付」下单"),
     ]
     if is_admin:
         commands.append(
@@ -56,6 +65,14 @@ def format_help(config: AppConfig, has_products: bool, is_admin: bool = False) -
             parts.append(f"每满 100 元增加 {_money(rule.per_100_free_weight)}kg 免重")
         parts.append("最低 0 元")
         lines.append(f"· {label}：{'；'.join(parts)}。")
+
+    lines.append("")
+    default_pay = config.payment.pay_type
+    pay_label = PAY_TYPE_LABELS.get(default_pay, default_pay)
+    if default_pay == PAY_TYPE_AUTO:
+        lines.append("支付方式：默认不限（收银台自选），下单时可指定 支付宝/微信/QQ钱包。")
+    else:
+        lines.append(f"支付方式：默认{pay_label}，下单时可改指定其他方式。")
 
     lines.append("")
     fee = config.proxy_fee

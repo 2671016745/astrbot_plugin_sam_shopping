@@ -129,9 +129,11 @@ class FakePayment:
         self.queries = 0
         self.paid = False
         self.trade_no = "TRADE123"
+        self.pay_types = []
 
-    async def create_payment(self, order, shop_name="山姆代购"):
+    async def create_payment(self, order, shop_name="山姆代购", pay_type=None):
         self.created.append(order)
+        self.pay_types.append(pay_type)
         if self.ok:
             return CreatePaymentResult(ok=True, qr_url=self.qr_url)
         return CreatePaymentResult(ok=False, message=self.message or "生成失败")
@@ -518,6 +520,63 @@ async def test_payment_failure():
 
 
 # ----------------------------------------------------------------------
+# 4.2 多种支付方式
+# ----------------------------------------------------------------------
+def test_create_params_pay_type():
+    cfg = AppConfig.from_dict(
+        {"payment": {"gateway": "https://pay.example.com", "pid": "1", "key": "secret"}}
+    ).payment
+    client = payment_mod.YiPayClient(cfg)
+
+    class _Order:
+        order_id = "SAM20260101001"
+        total = Decimal("10.00")
+
+    params = client._create_params(_Order(), "山姆代购")
+    check("默认不限时不传 type（走收银台）", "type" not in params, repr(params))
+    params = client._create_params(_Order(), "山姆代购", pay_type="alipay")
+    eq("指定支付方式写入 type", params.get("type"), "alipay")
+    params = client._create_params(_Order(), "山姆代购", pay_type="QQ钱包")
+    eq("中文支付方式也能写入 type", params.get("type"), "qqpay")
+
+
+async def test_pay_type_commands():
+    constants = _core("constants")
+    eq("解析中文支付方式", constants.parse_pay_type("微信"), "wxpay")
+    eq("解析英文支付方式", constants.parse_pay_type("alipay"), "alipay")
+    eq("解析大小写", constants.parse_pay_type("WXPAY"), "wxpay")
+    eq("解析不限", constants.parse_pay_type("收银台"), "auto")
+    eq("认不出返回空", constants.parse_pay_type("比特币"), "")
+
+    plugin = make_plugin({"general": {"admins": ["admin1"]}}, "paytype")
+    plugin.payment = FakePayment()
+    plugin.mailer = FakeMailer()
+
+    await run_cmd(plugin, "sam's add 水果 车厘子 智利车厘子 89.9 1.5", sender_id="admin1")
+    await run_cmd(plugin, "sam's buy 智利车厘子 1")
+
+    _, out = await run_cmd(plugin, "sam's pay 极速达 微信")
+    text = texts(out)
+    check("pay 指定微信时提示", "微信支付" in text, text)
+    _, out = await run_cmd(plugin, "确认")
+    eq("下单透传指定支付方式", plugin.payment.pay_types[-1], "wxpay")
+
+    await run_cmd(plugin, "sam's buy 智利车厘子 1")
+    _, out = await run_cmd(plugin, "sam's pay")
+    check("未指定时按配置默认（不限）提示", "不限" in texts(out), texts(out))
+    _, out = await run_cmd(plugin, "确认")
+    eq("未指定时用配置默认", plugin.payment.pay_types[-1], "auto")
+
+    await run_cmd(plugin, "sam's buy 智利车厘子 1")
+    _, out = await run_cmd(plugin, "sam's pay 全国配 支付宝")
+    check("同时指定配送与支付方式", "支付宝" in texts(out), texts(out))
+
+    await run_cmd(plugin, "sam's buy 智利车厘子 1")
+    _, out = await run_cmd(plugin, "sam's pay blah")
+    check("无法识别的参数给出用法", "用法：pay" in texts(out), texts(out))
+
+
+# ----------------------------------------------------------------------
 # 4.5 代购费指令流程
 # ----------------------------------------------------------------------
 async def test_proxy_fee_commands():
@@ -629,6 +688,29 @@ def test_config():
         AppConfig.from_dict({"payment": {"query_auth": "sign 签名"}}).payment.query_auth,
         "sign",
     )
+
+    # 支付方式：WebUI 中文标签与旧英文取值都要能解析
+    pay_cases = {
+        "不限（收银台，买家自选）": "auto",
+        "不限": "auto",
+        "支付宝 alipay": "alipay",
+        "微信支付 wxpay": "wxpay",
+        "QQ钱包 qqpay": "qqpay",
+        "wxpay": "wxpay",
+        "alipay": "alipay",
+    }
+    for raw, expected in pay_cases.items():
+        eq(
+            f"支付方式 {raw}",
+            AppConfig.from_dict({"payment": {"pay_type": raw}}).payment.pay_type,
+            expected,
+        )
+    eq("支付方式默认值", AppConfig.from_dict({}).payment.pay_type, "auto")
+    try:
+        AppConfig.from_dict({"payment": {"pay_type": "bitcoin"}})
+        check("非法支付方式应报错", False)
+    except Exception:  # noqa: BLE001
+        check("非法支付方式应报错", True)
 
     schema = json.loads(
         (Path(__file__).resolve().parent.parent / "_conf_schema.json").read_text(
@@ -775,6 +857,8 @@ async def main():
     test_proxy_fee_service()
     await test_commands()
     await test_payment_failure()
+    test_create_params_pay_type()
+    await test_pay_type_commands()
     await test_proxy_fee_commands()
     await test_official_commands()
     test_config()

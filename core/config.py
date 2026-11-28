@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .constants import PAY_TYPE_AUTO, PAY_TYPES
+
 CHANNEL_EXPRESS = "express"
 CHANNEL_NATIONAL = "national"
 CHANNELS = (CHANNEL_EXPRESS, CHANNEL_NATIONAL)
@@ -51,6 +53,23 @@ QUERY_AUTH_ALIASES = {
     "key（多数易支付网关）": "key",
     "sign": "sign",
     "sign 签名": "sign",
+}
+# 选项写成 WebUI 直接显示的中文标签；兼容旧配置的英文取值。
+PAY_TYPE_ALIASES = {
+    PAY_TYPE_AUTO: PAY_TYPE_AUTO,
+    "不限（收银台，买家自选）": PAY_TYPE_AUTO,
+    "不限": PAY_TYPE_AUTO,
+    "不限（收银台）": PAY_TYPE_AUTO,
+    "收银台": PAY_TYPE_AUTO,
+    "alipay": "alipay",
+    "支付宝 alipay": "alipay",
+    "支付宝": "alipay",
+    "wxpay": "wxpay",
+    "微信支付 wxpay": "wxpay",
+    "微信": "wxpay",
+    "qqpay": "qqpay",
+    "QQ钱包 qqpay": "qqpay",
+    "qq钱包": "qqpay",
 }
 
 
@@ -218,7 +237,7 @@ class PaymentConfig:
     gateway: str = ""
     pid: str = ""
     key: str = ""
-    pay_type: str = "wxpay"
+    pay_type: str = PAY_TYPE_AUTO
     sign_type: str = "MD5"
     create_path: str = "/mapi.php"
     query_path: str = "/api.php"
@@ -370,7 +389,7 @@ class AppConfig:
                 gateway=_str(payment.get("gateway"), ""),
                 pid=_str(payment.get("pid"), ""),
                 key=_str(payment.get("key"), ""),
-                pay_type=_str(payment.get("pay_type"), "wxpay"),
+                pay_type=_alias(payment.get("pay_type"), PAY_TYPE_ALIASES, PAY_TYPE_AUTO),
                 sign_type=_str(payment.get("sign_type"), "MD5").upper(),
                 create_path=_str(payment.get("create_path"), "/mapi.php"),
                 query_path=_str(payment.get("query_path"), "/api.php"),
@@ -438,6 +457,15 @@ class AppConfig:
             raise ConfigError("默认配送方式为全国配，但全国配未启用")
         if self.poll.interval <= 0:
             raise ConfigError("轮询间隔 interval 必须大于 0")
+        if self.payment.pay_type not in PAY_TYPES:
+            raise ConfigError(
+                "支付方式 pay_type 只能是不限(auto) / alipay / wxpay / qqpay，"
+                f"当前为 {self.payment.pay_type!r}"
+            )
+        if self.payment.query_auth not in ("key", "sign"):
+            raise ConfigError(
+                f"查询鉴权 query_auth 只能是 key 或 sign，当前为 {self.payment.query_auth!r}"
+            )
         if self.default_weight_kg < 0:
             raise ConfigError("默认重量 default_weight_kg 不能为负数")
         self._validate_proxy_fee()
